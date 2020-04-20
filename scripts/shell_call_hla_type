@@ -1,0 +1,271 @@
+#!/bin/bash
+
+
+#### check if an appropriate number of arguments were passed ####
+
+if [ $# -ne 7 ]; then
+        echo 1>&2 Usage: $0 bam race includeFreq build format insertCalc outDir
+	echo "	-bam: path to the BAM file to be used for HLA typing"
+	echo "	-race: ethnicity of the individual (Caucasian, Black, Asian or Unknown)"
+	echo "	-includeFreq: flag indicating whether population-level allele frequencies should be used as priors (0 or 1)"
+	echo "	-build: reference genome used in the BAM file (hg18, hg19 or hg38)"
+	echo "	-format: fastq format (STDFQ, ILMFQ, ILM1.8 or SLXFQ; see Novoalign documentation)"
+	echo "	-insertCalc: flag indicating whether empirical insert size distribution should be used in the model (0 or 1)"
+	echo "	-outDir: output directory"
+        exit 127
+fi
+
+bam=$1
+race=$2
+includeFreq=$3
+build=$4
+format=$5
+insertCalc=$6
+outDir=$7
+
+ids=/home/polysolver/data/ids
+tag_file=/home/polysolver/data/abc_v14.uniq
+
+
+set -e 
+
+
+if [ ! -d $outDir ]; then
+	mkdir $outDir
+fi
+
+var=`cat $ids`
+
+# check if the bam is paired end
+
+/home/polysolver/binaries/samtools view $bam | head -10000 | cut -f2   > $outDir/temp.checkpairs
+
+ls -lah $outDir/temp.checkpairs
+
+head $outDir/temp.checkpairs
+
+count=`wc -l $outDir/temp.checkpairs`
+
+echo "temp.checkpairs # lines = $count"
+
+#status=`/home/polysolver/scripts/check_bam_flag_pairs.pl temp.checkpairs 0 1`
+
+/home/polysolver/scripts/check_bam_flag_pairs_at_least_one.pl $outDir/temp.checkpairs 0 1 $outDir
+
+
+status=`tail -1 $outDir/check.status.out.txt | cut -f2`
+
+ls -lah $outDir/check.status.out.txt
+
+echo "check_bam_flag_pairs status = $status"
+
+if [ $status == 0 ]; then
+        echo "bam=$bam file is not paired"
+        exit 1
+fi
+
+#rm -f temp.checkpairs
+
+
+# calculate insert size distribution
+
+
+if [ $insertCalc == 1 ]; then
+
+	echo -n -e "calculating insert size distribution\n"
+
+	/usr/bin/java -Xmx12g -Xms5g -jar /home/polysolver/binaries/CollectInsertSizeMetrics.jar I=$bam O=$outDir/insertsize.txt H=$outDir/insertsize.hist.pdf VALIDATION_STRINGENCY=SILENT TMP_DIR=$outDir
+
+
+else
+	echo -n -e "skipping insert size distribution\n"
+
+	iFile=0
+
+fi
+
+# getting matching tag sequences
+
+echo -n -e "getting matching tags\n"
+
+/home/polysolver/binaries/samtools view -H $bam > $outDir/tag.sam
+
+/home/polysolver/binaries/samtools view $bam | grep -F -f $tag_file >> $outDir/tag.sam
+
+/home/polysolver/binaries/samtools view -bS -o $outDir/tag.bam $outDir/tag.sam
+
+/usr/bin/java -jar /home/polysolver/binaries/SamToFastq.jar I=$outDir/tag.bam F=$outDir/tag.1.fastq F2=$outDir/tag.2.fastq VALIDATION_STRINGENCY=SILENT
+
+/home/polysolver/scripts/clean_unpaired_fastq.pl $outDir/tag.1.fastq
+
+/home/polysolver/scripts/clean_unpaired_fastq.pl $outDir/tag.2.fastq
+
+#getting chr6 region
+
+echo -n -e "getting chr6 region\n"
+
+/home/polysolver/binaries/samtools view -H $bam > $outDir/chr6region.sam
+
+if [ $build == "hg38" ]; then
+
+        echo -n -e "build=hg38\n"
+
+        $SAMTOOLS_DIR/samtools view $bam 6:29941260-29945884 >> $outDir/chr6region.sam
+
+        $SAMTOOLS_DIR/samtools view $bam 6:31353872-31357187 >> $outDir/chr6region.sam
+
+        $SAMTOOLS_DIR/samtools view $bam 6:31268749-31272105 >> $outDir/chr6region.sam
+
+elif [ $build == "hg19" ]; then
+
+        echo -n -e "build=hg19\n"
+
+        /home/polysolver/binaries/samtools view $bam chr6:29909037-29913661 >> $outDir/chr6region.sam #6 -> chr6
+
+        /home/polysolver/binaries/samtools view $bam chr6:31321649-31324964 >> $outDir/chr6region.sam #6 -> chr6
+
+        /home/polysolver/binaries/samtools view $bam chr6:31236526-31239869 >> $outDir/chr6region.sam #6 -> chr6
+        #add contigs by ypu
+        /home/polysolver/binaries/samtools view $bam chr6_apd_hap1 >> $outDir/chr6region.sam
+
+        /home/polysolver/binaries/samtools view $bam chr6_cox_hap2 >> $outDir/chr6region.sam
+
+        /home/polysolver/binaries/samtools view $bam chr6_dbb_hap3 >> $outDir/chr6region.sam
+
+        /home/polysolver/binaries/samtools view $bam chr6_mann_hap4 >>$outDir/chr6region.sam
+
+        /home/polysolver/binaries/samtools view $bam chr6_mcf_hap5 >> $outDir/chr6region.sam
+
+        /home/polysolver/binaries/samtools view $bam chr6_qbl_hap6 >> $outDir/chr6region.sam
+
+        /home/polysolver/binaries/samtools view $bam chr6_ssto_hap7 >> $outDir/chr6region.sam
+
+
+else
+
+        echo -n -e "build=hg18\n"
+
+        /home/polysolver/binaries/samtools view $bam chr6:30016016-30022640 >> $outDir/chr6region.sam
+
+        /home/polysolver/binaries/samtools view $bam chr6:31428628-31433943 >> $outDir/chr6region.sam
+
+        /home/polysolver/binaries/samtools view $bam chr6:31343505-31348848 >> $outDir/chr6region.sam
+
+fi
+
+/home/polysolver/binaries/samtools view -bS -o $outDir/chr6region.bam $outDir/chr6region.sam
+
+/usr/bin/java -jar /home/polysolver/binaries/SamToFastq.jar I=$outDir/chr6region.bam F=$outDir/chr6region.1.fastq F2=$outDir/chr6region.2.fastq VALIDATION_STRINGENCY=SILENT
+
+/home/polysolver/scripts/clean_unpaired_fastq.pl $outDir/chr6region.1.fastq
+
+/home/polysolver/scripts/clean_unpaired_fastq.pl $outDir/chr6region.2.fastq
+
+# merge the two sets of fastqs
+
+echo -n -e "merge the two sets of fastqs\n"
+
+/home/polysolver/scripts/merge_fastq.pl $outDir/tag $outDir/chr6region $outDir/merged
+
+rm -f $outDir/*sam
+
+# alignment
+
+echo -n -e "aligning to HLA library\n"
+
+cat /home/polysolver/data/novoalign_complete_header.sam > $outDir/nv.complete.chr6region.R0k6.sam
+
+/home/polysolver/scripts/align_fork_fh.pl $outDir/merged.1.fastq $outDir/merged.2.fastq 8 $format /home/polysolver/data/abc_complete.nix $outDir/nv.complete.chr6region.R0k6.sam 0 /home/polysolver/binaries
+
+/home/polysolver/binaries/samtools view -bS -o $outDir/nv.complete.chr6region.R0k6.bam $outDir/nv.complete.chr6region.R0k6.sam
+
+rm -f $outDir/nv.complete.chr6region.R0k6.sam
+
+echo -n -e "sorting\n"
+
+/usr/bin/java -jar /home/polysolver/binaries/SortSam.jar I=$outDir/nv.complete.chr6region.R0k6.bam O=$outDir/nv.complete.chr6region.R0k6.csorted.bam SORT_ORDER=coordinate TMP_DIR=/home/polysolver
+
+t=`ls -lh $outDir/nv.complete.chr6region.R0k6.csorted.bam`
+echo -n -e "size of bam = $t\n"
+
+rm -f $outDir/nv.complete.chr6region.R0k6.bam
+
+/home/polysolver/binaries/samtools index $outDir/nv.complete.chr6region.R0k6.csorted.bam
+
+# first allele calculations
+
+echo -n -e "calculating lik1\n"
+date
+
+/home/polysolver/scripts/first_allele_calculations_fork.pl $ids /home/polysolver /home/polysolver/binaries/samtools 8 $race $iFile $outDir
+
+date
+
+echo -n -e "get first winners\n"
+date
+
+#rm $outDir/counts1.R0k6
+
+for i in $var; do
+        a=`tail -1 $outDir/$i.lik1 | cut -f2`
+        echo -n -e "$i\t$a\n" >> $outDir/counts1.R0k6
+done
+
+winner1_a=`sort -k2,2rn $outDir/counts1.R0k6 | grep hla_a | head -1 | cut -f1`
+winner1_b=`sort -k2,2rn $outDir/counts1.R0k6 | grep hla_b | head -1 | cut -f1`
+winner1_c=`sort -k2,2rn $outDir/counts1.R0k6 | grep hla_c | head -1 | cut -f1`
+
+date
+
+
+# second allele calculations
+
+echo -n -e "calculating lik2\n"
+
+/home/polysolver/scripts/second_allele_calculations.pl $race $outDir/counts1.R0k6 $ids 1 /home/polysolver $outDir
+
+date
+
+echo -n -e "get second winners\n"
+
+#rm $outDir/counts2.R0k6
+
+for i in $var; do
+        a=`tail -1 $outDir/$i.lik2 | cut -f2`
+        echo -n -e "$i\t$a\n" >> $outDir/counts2.R0k6
+done
+
+winner2_a=`sort -k2,2rn $outDir/counts2.R0k6 | grep hla_a | head -1 | cut -f1`
+winner2_b=`sort -k2,2rn $outDir/counts2.R0k6 | grep hla_b | head -1 | cut -f1`
+winner2_c=`sort -k2,2rn $outDir/counts2.R0k6 | grep hla_c | head -1 | cut -f1`
+
+echo -n -e "winners1\t$winner1_a\t$winner1_b\t$winner1_c\n"
+echo -n -e "winners2\t$winner2_a\t$winner2_b\t$winner2_c\n"
+
+
+if [ $includeFreq == 1 ]; then
+
+	echo -n -e "HLA-A\t$winner1_a\t$winner2_a\nHLA-B\t$winner1_b\t$winner2_b\nHLA-C\t$winner1_c\t$winner2_c\n" > $outDir/winners.hla.txt
+
+else
+
+	echo -n -e "HLA-A\t$winner1_a\t$winner2_a\nHLA-B\t$winner1_b\t$winner2_b\nHLA-C\t$winner1_c\t$winner2_c\n" > $outDir/winners.hla.nofreq.txt
+fi
+
+
+# cleanup
+
+echo -n -e "cleanup\n"
+
+
+rm -f $outDir/temp* 
+rm -f $outDir/*sam 
+rm -f  $outDir/tag*fastq0* $outDir/ids_* 
+rm -rf $outDir/*REF* 
+rm -rf $outDir/nv* 
+rm -rf $outDir/*fastq 
+rm -rf $outDir/tag* 
+rm -rf $outDir/chr6region* 
+rm -rf $outDir/merged* 
+#rm -rf $outDir/counts* 
+rm -f $outDir/*lik1 $outDir/*lik2

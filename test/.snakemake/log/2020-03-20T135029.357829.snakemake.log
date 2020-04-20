@@ -1,0 +1,4 @@
+Building DAG of jobs...
+MissingInputException in line 30 of /data_sas/ypu/git_repository/HEMECDx/_soft/lohhla/hla_loh.docker.smk:
+Missing input files for rule loh_run_lohhla:
+bam/tumor.sort.bam
