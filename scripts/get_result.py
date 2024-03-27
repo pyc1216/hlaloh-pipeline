@@ -1,11 +1,11 @@
-import math
-import pandas as pd
+import os
 import sys
+import pandas as pd
 
 '''
-2.  HLALOH判读标准：
-1）A copy number < 0.5, is classified as subject to loss, and thereby indicative of LOH.
-2）Allelic imbalance is determined if p < 0.01 using the paired Student’s t-Test between the two distributions.
+HLA LOH interpretation criteria
+1) A copy number < 0.5, is classified as subject to loss, and thereby indicative of LOH.
+2) Allelic imbalance is determined if p < 0.01 using the paired Student’s t-Test between the two distributions.
 '''
 
 
@@ -13,10 +13,13 @@ cutoff = {'pval': 0.01, 'cn': 0.5}
 #cutoff = {'pval': 0.05, 'cn': 1} #test
 
 def get_loss_allels(loh, cutoff):
+    if not os.path.getsize(loh):
+        return []
     df = pd.read_table(loh)
     df = df.drop_duplicates()
-    df = df[(df['PVal_unique'] < cutoff['pval']) & (df['HLA_type2copyNum_withBAFBin'] < math.log2(cutoff['cn']))]
-    return df.get('LossAllele')
+    df = df[(df.PVal_unique < cutoff['pval'])] #Allelic imbalance is determined if p < 0.01
+    df = df[(df.HLA_type1copyNum_withBAFBin < cutoff['cn']) | (df.HLA_type2copyNum_withBAFBin < cutoff['cn'])] #copy number < 0.5
+    return df.LossAllele
 
 def main(infile, outfile):
     out_list = list(get_loss_allels(infile, cutoff))
